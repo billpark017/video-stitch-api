@@ -11,10 +11,15 @@ const app = express();
 
 app.use(express.json({ limit: "10mb" }));
 
-// ✅ Health check: should show "OK" in browser
-app.get("/", (req, res) => {
-  res.status(200).send("OK");
+// Log every request (so we can see traffic in Render logs)
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${req.method} ${req.path}`);
+  next();
 });
+
+// ✅ Root + health checks
+app.get("/", (_req, res) => res.status(200).send("OK-root"));
+app.get("/health", (_req, res) => res.status(200).json({ ok: true, message: "OK-health" }));
 
 const TMP_DIR = "/tmp";
 const OUT_DIR = path.join(TMP_DIR, "out");
@@ -39,16 +44,11 @@ app.post("/stitch", async (req, res) => {
     const { clips } = req.body;
 
     if (!Array.isArray(clips) || clips.length < 2) {
-      return res.status(400).json({
-        error: "clips must be an array of 2+ URLs"
-      });
+      return res.status(400).json({ error: "clips must be an array of 2+ URLs" });
     }
-
     for (const u of clips) {
       if (typeof u !== "string" || !u.startsWith("http")) {
-        return res.status(400).json({
-          error: "All clip URLs must start with http/https"
-        });
+        return res.status(400).json({ error: "All clip URLs must start with http/https" });
       }
     }
 
@@ -64,16 +64,15 @@ app.post("/stitch", async (req, res) => {
       filePaths.push(fp);
     }
 
-    // Build concat list file for ffmpeg
+    // Concat list file
     const listPath = path.join(jobDir, "files.txt");
-    const listContent = filePaths.map((fp) => `file '${fp}'`).join("\n");
-    fs.writeFileSync(listPath, listContent);
+    fs.writeFileSync(listPath, filePaths.map((fp) => `file '${fp}'`).join("\n"));
 
     // Output file
     const outName = `final-${jobId}.mp4`;
     const outPath = path.join(OUT_DIR, outName);
 
-    // Concatenate and re-encode for compatibility
+    // Concat + re-encode
     await execFileAsync("ffmpeg", [
       "-y",
       "-f", "concat",
@@ -88,18 +87,19 @@ app.post("/stitch", async (req, res) => {
       outPath
     ]);
 
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const finalUrl = `${baseUrl}/files/${outName}`;
-
-    // cleanup job dir (downloads + list file)
+    // Cleanup downloads
     fs.rmSync(jobDir, { recursive: true, force: true });
 
-    return res.json({ jobId, finalUrl });
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    return res.json({
+      jobId,
+      finalUrl: `${baseUrl}/files/${outName}`
+    });
   } catch (err) {
-    // cleanup on error too
     if (jobDir) {
       try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch (_) {}
     }
+    console.error("[ERROR]", err);
     return res.status(500).json({ error: err.message || String(err) });
   }
 });
@@ -113,5 +113,6 @@ app.get("/files/:name", (req, res) => {
   fs.createReadStream(fp).pipe(res);
 });
 
+// IMPORTANT: Render injects PORT. Use it.
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Stitch API listening on ${PORT}`));
