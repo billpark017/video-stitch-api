@@ -115,4 +115,8 @@ app.get("/files/:name", (req, res) => {
 
 // IMPORTANT: Render injects PORT. Use it.
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Stitch API listening on ${PORT}`));
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Stitch API listening on ${PORT}`);
+});
+
